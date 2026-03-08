@@ -1,0 +1,45 @@
+# Agent context — never commit
+CLAUDE.md
+
+# Environment and secrets
+.env
+.env.*
+*.key
+credentials.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Unity generated
+unity-project/Library/
+unity-project/Temp/
+unity-project/Obj/
+unity-project/Build/
+unity-project/Builds/
+unity-project/Logs/
+unity-project/UserSettings/
+unity-project/MemoryCaptures/
+unity-project/Assets/Plugins/Android/*.aar
+*.csproj
+*.sln
+*.unityproj
+*.pidb
+*.pdb
+*.userprefs
+
+# Gradle
+companion-app/.gradle/
+companion-app/app/build/
+companion-app/build/
+companion-app/local.properties
+*.apk
+
+# Build outputs
+builds/

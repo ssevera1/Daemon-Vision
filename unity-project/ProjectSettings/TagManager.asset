@@ -1,0 +1,66 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!78 &1
+TagManager:
+  serializedVersion: 2
+  tags:
+  - SimulatedPerson
+  - DSpaceAnchor
+  - HUDElement
+  - Interactable
+  - Nameplate
+  layers:
+  - Default
+  - TransparentFX
+  - Ignore Raycast
+  -
+  - Water
+  - UI
+  -
+  -
+  - DSpace
+  - HUD
+  - Detection
+  - Network
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  m_SortingLayers:
+  - name: Default
+    uniqueID: 0
+    locked: 0
+  - name: HUD_Background
+    uniqueID: 1
+    locked: 0
+  - name: HUD_Elements
+    uniqueID: 2
+    locked: 0
+  - name: HUD_Overlay
+    uniqueID: 3
+    locked: 0
+  - name: Nameplates
+    uniqueID: 4
+    locked: 0
+  - name: DSpace_Anchors
+    uniqueID: 5
+    locked: 0
+  - name: DSpace_Effects
+    uniqueID: 6
+    locked: 0

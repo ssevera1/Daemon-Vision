@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0A14"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Title Section                                -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.3"
+            android:text="DAEMON VISION"
+            android:textAlignment="center"
+            android:textColor="#00E5CC"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.5"
+            android:text="COMPANION"
+            android:textAlignment="center"
+            android:textColor="#667788"
+            android:textSize="14sp" />
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Connection Status Card                       -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.15"
+                android:text="CONNECTION"
+                android:textColor="#556677"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Status indicator dot -->
+                <View
+                    android:id="@+id/connection_indicator"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="#FF3355" />
+
+                <TextView
+                    android:id="@+id/connection_status_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="monospace"
+                    android:text="Disconnected"
+                    android:textColor="#FF3355"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- Last relay timestamp -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="Last relay: "
+                    android:textColor="#445566"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/last_relay_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="--:--:--.---"
+                    android:textColor="#778899"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- GPS Coordinates Card                         -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.15"
+                android:text="GPS COORDINATES"
+                android:textColor="#556677"
+                android:textSize="11sp" />
+
+            <!-- Latitude -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="80dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="LAT"
+                    android:textColor="#556677"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/latitude_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="0.000000"
+                    android:textColor="#CCDDEE"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- Longitude -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="80dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="LON"
+                    android:textColor="#556677"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/longitude_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="0.000000"
+                    android:textColor="#CCDDEE"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- Altitude -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="80dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="ALT"
+                    android:textColor="#556677"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/altitude_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="0.0 m"
+                    android:textColor="#CCDDEE"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- Accuracy -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="80dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="ACC"
+                    android:textColor="#556677"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/accuracy_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="0.0 m"
+                    android:textColor="#CCDDEE"
+                    android:textSize="16sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Peer Count Card                              -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_background"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.15"
+                android:text="PEERS ON MESH"
+                android:textColor="#556677"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/peer_count_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="0"
+                android:textColor="#00E5CC"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Glasses IP Input                             -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.15"
+                android:text="GLASSES ADDRESS"
+                android:textColor="#556677"
+                android:textSize="11sp" />
+
+            <EditText
+                android:id="@+id/glasses_ip_input"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/input_background"
+                android:fontFamily="monospace"
+                android:hint="192.168.x.x"
+                android:inputType="text"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="#CCDDEE"
+                android:textColorHint="#334455"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_scan_glasses"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/button_outline"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.1"
+                android:text="SCAN FOR GLASSES"
+                android:textColor="#00E5CC"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Relay Control Buttons                        -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_start_relay"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_primary"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.1"
+                android:text="START GPS RELAY"
+                android:textColor="#0A0A14"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btn_stop_relay"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_danger"
+                android:enabled="false"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.1"
+                android:text="STOP RELAY"
+                android:textColor="#CCDDEE"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Network Status Section                       -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.15"
+                android:text="NETWORK"
+                android:textColor="#556677"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/local_ip_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:text="Local IP: ---.---.---.---"
+                android:textColor="#778899"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/network_status_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="monospace"
+                android:text="Idle — tap Scan to find glasses"
+                android:textColor="#556677"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

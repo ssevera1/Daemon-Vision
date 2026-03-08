@@ -1,0 +1,21 @@
+{
+    "name": "DaemonVision",
+    "rootNamespace": "DaemonVision",
+    "references": [
+        "Unity.XR.ARFoundation",
+        "Unity.XR.ARSubsystems",
+        "Unity.XR.OpenXR",
+        "Unity.InputSystem",
+        "Unity.TextMeshPro",
+        "Unity.Barracuda"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
