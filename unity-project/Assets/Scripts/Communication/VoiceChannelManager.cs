@@ -27,9 +27,13 @@ namespace DaemonVision.Communication
         private readonly Dictionary<string, VoiceChannel> activeChannels
             = new Dictionary<string, VoiceChannel>();
 
+        private const int MicSampleRate = 16000;      // 16 kHz mono
+        private const int MaxSamplesPerPacket = 3200;  // 200 ms; keeps datagrams well under MTU-friendly sizes
+
         private bool isMicActive;
         private AudioClip micClip;
         private string micDevice;
+        private int lastMicPosition;
 
         public bool IsMicActive => isMicActive;
         public string ActiveChannelId { get; private set; }
@@ -92,7 +96,8 @@ namespace DaemonVision.Communication
             if (micDevice == null) return;
             if (isMicActive) return;
 
-            micClip = Microphone.Start(micDevice, true, 1, 16000); // 16kHz mono
+            micClip = Microphone.Start(micDevice, true, 1, MicSampleRate);
+            lastMicPosition = 0;
             isMicActive = true;
             Log("Voice: Transmitting...");
         }
@@ -122,12 +127,42 @@ namespace DaemonVision.Communication
         {
             if (!isMicActive || micClip == null) return;
 
-            // Read audio samples from microphone
+            // Read only the samples recorded since the last frame. The clip is a
+            // one-second ring buffer, so the read position can wrap around.
             int pos = Microphone.GetPosition(micDevice);
-            if (pos <= 0) return;
+            if (pos < 0 || pos == lastMicPosition) return;
 
-            float[] samples = new float[pos];
-            micClip.GetData(samples, 0);
+            int clipSamples = micClip.samples;
+            int count = pos > lastMicPosition
+                ? pos - lastMicPosition
+                : clipSamples - lastMicPosition + pos;
+            if (count <= 0) return;
+
+            // If we fell behind by more than one packet, skip ahead rather than
+            // flooding the mesh with stale audio.
+            if (count > MaxSamplesPerPacket)
+            {
+                lastMicPosition = (pos - MaxSamplesPerPacket + clipSamples) % clipSamples;
+                count = MaxSamplesPerPacket;
+            }
+
+            float[] samples = new float[count];
+            if (lastMicPosition + count <= clipSamples)
+            {
+                micClip.GetData(samples, lastMicPosition);
+            }
+            else
+            {
+                int tail = clipSamples - lastMicPosition;
+                var tailBuffer = new float[tail];
+                micClip.GetData(tailBuffer, lastMicPosition);
+                Array.Copy(tailBuffer, 0, samples, 0, tail);
+
+                var headBuffer = new float[count - tail];
+                micClip.GetData(headBuffer, 0);
+                Array.Copy(headBuffer, 0, samples, tail, headBuffer.Length);
+            }
+            lastMicPosition = pos;
 
             // Check voice activation level
             float maxLevel = 0f;

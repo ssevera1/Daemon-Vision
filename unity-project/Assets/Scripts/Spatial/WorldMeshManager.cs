@@ -23,6 +23,8 @@ namespace DaemonVision.Spatial
 
         private ARPlaneManager planeManager;
         private ARMeshManager meshManager;
+        private ARRaycastManager arRaycastManager;
+        private readonly List<ARRaycastHit> arHits = new List<ARRaycastHit>();
 
         private readonly List<ARPlane> detectedPlanes = new List<ARPlane>();
         private readonly Dictionary<TrackableId, SurfaceInfo> surfaces
@@ -34,6 +36,7 @@ namespace DaemonVision.Spatial
         {
             planeManager = FindObjectOfType<ARPlaneManager>();
             meshManager = FindObjectOfType<ARMeshManager>();
+            arRaycastManager = FindObjectOfType<ARRaycastManager>();
 
             if (planeManager != null)
             {
@@ -54,17 +57,28 @@ namespace DaemonVision.Spatial
         /// </summary>
         public bool RaycastWorld(Ray ray, out RaycastHit hit, float maxDistance = 10f)
         {
-            // First try AR raycast
-            var arRaycastManager = FindObjectOfType<ARRaycastManager>();
-            if (arRaycastManager != null)
+            // First try AR raycast against tracked planes and meshes
+            var camera = Manager != null ? Manager.ARCamera : null;
+            if (arRaycastManager != null && camera != null)
             {
-                var hits = new List<ARRaycastHit>();
-                var screenPoint = Manager.ARCamera.WorldToScreenPoint(ray.origin + ray.direction);
-                if (arRaycastManager.Raycast(new Vector2(screenPoint.x, screenPoint.y), hits, TrackableType.AllTypes))
+                arHits.Clear();
+                var screenPoint = camera.WorldToScreenPoint(ray.origin + ray.direction);
+                if (arRaycastManager.Raycast(new Vector2(screenPoint.x, screenPoint.y), arHits, TrackableType.AllTypes)
+                    && arHits.Count > 0)
                 {
-                    hit = new RaycastHit();
-                    // Use the closest AR hit point
-                    return true;
+                    // Results are sorted by distance; surface the closest one in
+                    // RaycastHit form so callers do not need to know which path hit.
+                    var closest = arHits[0];
+                    if (closest.distance <= maxDistance)
+                    {
+                        hit = new RaycastHit
+                        {
+                            point = closest.pose.position,
+                            normal = closest.pose.up,
+                            distance = closest.distance
+                        };
+                        return true;
+                    }
                 }
             }
 

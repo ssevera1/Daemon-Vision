@@ -7,7 +7,7 @@
         "Unity.XR.OpenXR",
         "Unity.InputSystem",
         "Unity.TextMeshPro",
-        "Unity.Barracuda"
+        "Unity.Sentis"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -16,6 +16,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.sentis",
+            "expression": "2.0.0",
+            "define": "UNITY_SENTIS"
+        }
+    ],
     "noEngineReferences": false
 }

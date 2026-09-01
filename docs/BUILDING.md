@@ -2,10 +2,10 @@
 
 ## Prerequisites
 
-- **Unity 2022.3 LTS** or newer (2023.x recommended)
+- **Unity 2022.3 LTS** (2022.3.62f1 is pinned in `ProjectSettings/ProjectVersion.txt`)
 - **Android Build Support** module (via Unity Hub)
 - **Android SDK 28+** and **NDK r25+**
-- **JDK 11**
+- **JDK 17** (required by Android Gradle Plugin 8 for the companion app)
 - **Git** for version control
 - **ADB** for device deployment
 
@@ -13,6 +13,12 @@
 - **Xcode 15+** for iOS builds
 - **Meta XR SDK** for Quest-specific features
 - **Snapdragon Spaces SDK** for Qualcomm XR2 devices
+- **Unity Sentis 2.x** for ML person detection. Sentis 2.x requires Unity 6, so on
+  2022.3 the `MLPersonDetector` subsystem compiles to a stub and the Editor uses
+  the simulated detector instead. To enable it: open the project in Unity 6, add
+  `com.unity.sentis` 2.1.x in Package Manager (the `UNITY_SENTIS` define is set
+  automatically by `DaemonVision.asmdef`), import an ONNX model, and assign it to
+  the `MLPersonDetector` component's Model Asset field.
 
 ---
 
@@ -20,9 +26,13 @@
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/your-org/daemon-vision.git
-cd daemon-vision
+git clone https://github.com/ssevera1/Daemon-Vision.git
+cd Daemon-Vision
 ```
+
+Unity `.meta` files are committed. If you add assets outside the Editor, run
+`python tools/unity/generate_meta.py` before committing so scene references
+keep their GUIDs.
 
 ### 2. Open in Unity
 1. Open Unity Hub → Add Project → Select `unity-project/` directory
@@ -68,11 +78,30 @@ Unity -batchmode -projectPath ./unity-project \
 ```
 
 ### Output
-Builds appear in `unity-project/Builds/`:
+Editor menu builds appear in `unity-project/Builds/`:
 - `DSpace_Quest.apk`
 - `DSpace_AndroidXR.apk`
 - `DSpace_PhoneAR.apk`
 - `DSpace_iOS/` (Xcode project)
+
+`tools/build/build.sh` passes `-outputPath` and writes timestamped APKs under
+`builds/<target>/` at the repository root, plus a `*_latest.apk` copy that
+`tools/build/deploy.sh` installs. Set `BUILD_CONFIG=release` for a
+non-development build.
+
+---
+
+## Network Ports
+
+All transports are UDP on the local network. The companion app and the Unity
+app share these constants (`tools/ci/validate_project.py` fails CI if they
+drift apart).
+
+| Port | Direction | Purpose | Defined in |
+|------|-----------|---------|------------|
+| 7733 | glasses to glasses | Mesh messages (chat, heartbeats, identity, quests) | `MeshNetworkManager.DefaultMeshPort` |
+| 7734 | broadcast | Discovery beacons `DSPACE:{json}`; the companion app listens here to find the glasses | `PeerDiscovery.DefaultDiscoveryPort`, `RelayProtocol.DISCOVERY_PORT` |
+| 7735 | phone to glasses | GPS relay `DSPACE_GPS\|lat\|lon\|alt\|acc\|bearing\|unixMillis`, answered with `DSPACE_ACK\|peers\|unixMillis` | `CompanionLocationReceiver.DefaultPort`, `RelayProtocol.GPS_RELAY_PORT` |
 
 ---
 

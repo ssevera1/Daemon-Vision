@@ -1,4 +1,4 @@
-// DarknetBootstrap.cs — The Daemon's boot sequence
+// DarknetBootstrap.cs - The Daemon's boot sequence
 // "The Daemon is listening. The Daemon is watching. The Daemon has awakened."
 // This is the entry point that brings D-Space online.
 
@@ -14,11 +14,12 @@ using DaemonVision.Network;
 using DaemonVision.Detection;
 using DaemonVision.Communication;
 using DaemonVision.Input;
+using DaemonVision.Data;
 
 namespace DaemonVision.Core
 {
     /// <summary>
-    /// Bootstrap sequence — creates and registers all D-Space subsystems.
+    /// Bootstrap sequence: creates and registers all D-Space subsystems.
     /// Attach to the root DaemonVision GameObject in the scene.
     /// </summary>
     [DefaultExecutionOrder(-100)]
@@ -38,6 +39,10 @@ namespace DaemonVision.Core
         [SerializeField] private GameObject questThreadPrefab;
         [SerializeField] private GameObject dspaceObjectPrefab;
 
+        [Header("Optional Subsystems")]
+        [Tooltip("Register the Sentis-based detector. It disables itself when the package or model is missing.")]
+        [SerializeField] private bool enableMLPersonDetection = true;
+
         private void Awake()
         {
             Debug.Log("=== DAEMON VISION ===");
@@ -45,6 +50,7 @@ namespace DaemonVision.Core
             Debug.Log("Bootstrapping D-Space subsystems...");
 
             // Ensure core singletons exist
+            UnityMainThreadDispatcher.EnsureExists();
             EnsureComponent<ServiceLocator>();
             var dspace = EnsureComponent<DSpaceManager>();
 
@@ -54,28 +60,33 @@ namespace DaemonVision.Core
 
         private void RegisterSubsystems(DSpaceManager dspace)
         {
-            // Layer 0: Platform & Configuration
+            // Layer 0: Platform, configuration, and persistence
             dspace.RegisterSubsystem(EnsureComponent<GlassesProfileManager>());
+            dspace.RegisterSubsystem(EnsureComponent<DataPersistence>());
 
-            // Layer 1: Identity (must be first — everything depends on who you are)
+            // Layer 1: Identity (must be first; everything depends on who you are)
             dspace.RegisterSubsystem(EnsureComponent<DarknetIdentityManager>());
             dspace.RegisterSubsystem(EnsureComponent<BiometricAuth>());
 
-            // Layer 2: Spatial Awareness
+            // Layer 2: Spatial awareness
             dspace.RegisterSubsystem(EnsureComponent<SpatialAnchorManager>());
             dspace.RegisterSubsystem(EnsureComponent<GPSLocationProvider>());
             dspace.RegisterSubsystem(EnsureComponent<WorldMeshManager>());
+            dspace.RegisterSubsystem(EnsureComponent<AnchorDatabase>());
 
-            // Layer 3: Detection (people, objects, threats)
+            // Layer 3: Detection (people, depth, threats)
             dspace.RegisterSubsystem(EnsureComponent<PersonDetector>());
+            dspace.RegisterSubsystem(EnsureComponent<DepthEstimator>());
+            if (enableMLPersonDetection)
+                dspace.RegisterSubsystem(EnsureComponent<MLPersonDetector>());
             dspace.RegisterSubsystem(EnsureComponent<ThreatAssessment>());
 
-            // Layer 4: Network (mesh networking — the darknet itself)
+            // Layer 4: Network (mesh networking, the darknet itself)
             dspace.RegisterSubsystem(EnsureComponent<MeshNetworkManager>());
             dspace.RegisterSubsystem(EnsureComponent<PeerDiscovery>());
             dspace.RegisterSubsystem(EnsureComponent<DarknetProtocol>());
 
-            // Layer 5: Social Systems (reputation, factions, classes)
+            // Layer 5: Social systems (reputation, factions, classes)
             dspace.RegisterSubsystem(EnsureComponent<ReputationSystem>());
             dspace.RegisterSubsystem(EnsureComponent<FactionManager>());
             dspace.RegisterSubsystem(EnsureComponent<ClassSystem>());
@@ -84,8 +95,9 @@ namespace DaemonVision.Core
             // Layer 6: Economy
             dspace.RegisterSubsystem(EnsureComponent<DarknetEconomy>());
 
-            // Layer 7: Quest System
+            // Layer 7: Quest system
             dspace.RegisterSubsystem(EnsureComponent<QuestManager>());
+            dspace.RegisterSubsystem(EnsureComponent<QuestDatabase>());
 
             // Layer 8: Communication
             dspace.RegisterSubsystem(EnsureComponent<ChatSystem>());
@@ -96,7 +108,7 @@ namespace DaemonVision.Core
             dspace.RegisterSubsystem(EnsureComponent<GestureRecognizer>());
             dspace.RegisterSubsystem(EnsureComponent<VoiceCommandProcessor>());
 
-            // Layer 10: HUD Rendering (last — depends on everything else)
+            // Layer 10: HUD rendering (last; depends on everything else)
             dspace.RegisterSubsystem(EnsureComponent<HUDManager>());
             dspace.RegisterSubsystem(EnsureComponent<NameplateRenderer>());
             dspace.RegisterSubsystem(EnsureComponent<ThreatIndicatorRenderer>());
@@ -105,7 +117,7 @@ namespace DaemonVision.Core
             dspace.RegisterSubsystem(EnsureComponent<QuestHUDRenderer>());
             dspace.RegisterSubsystem(EnsureComponent<MinimapRenderer>());
 
-            Debug.Log($"[Bootstrap] Registered {dspace.GetType().Name} subsystems.");
+            Debug.Log($"[Bootstrap] Registered {dspace.Subsystems.Count} subsystems.");
         }
 
         private T EnsureComponent<T>() where T : Component

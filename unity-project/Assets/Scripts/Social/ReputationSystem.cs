@@ -99,7 +99,7 @@ namespace DaemonVision.Social
             };
 
             SaveRatingHistory();
-            Log($"Rated {targetAddress[..8]}... : {stars:F1} stars");
+            Log($"Rated {AddressUtil.Short(targetAddress)} : {stars:F1} stars");
             return RatingResult.Success;
         }
 

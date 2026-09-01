@@ -100,11 +100,11 @@ namespace DaemonVision.Communication
             if (identityManager?.LocalIdentity == null) return;
 
             // Create or get DM channel
-            string dmChannelId = $"dm_{targetAddress[..8]}";
+            string dmChannelId = $"dm_{AddressUtil.Prefix(targetAddress)}";
             if (!channels.ContainsKey(dmChannelId))
             {
                 var targetIdentity = identityManager.GetIdentity(targetAddress);
-                string name = targetIdentity?.Callsign ?? targetAddress[..8];
+                string name = targetIdentity?.Callsign ?? AddressUtil.Prefix(targetAddress);
                 CreateChannel(dmChannelId, $"DM: {name}", ChatChannelType.Direct, float.MaxValue);
             }
 

@@ -1,6 +1,10 @@
-// BiometricAuth.cs — Biometric authentication for D-Space access
-// In the Daemon, HUD glasses are biometrically keyed — retinal scan, fingerprint,
+// BiometricAuth.cs - Biometric authentication for D-Space access
+// In the Daemon, HUD glasses are biometrically keyed: retinal scan, fingerprint,
 // and in some cases fMRI-based authentication to prevent coerced access.
+//
+// On Android the prompt is driven by Assets/Plugins/Android/DSpaceBiometric.java,
+// which wraps the platform BiometricPrompt so it works from UnityPlayerActivity
+// without the androidx dependency the companion app uses.
 
 using System;
 using System.Threading.Tasks;
@@ -12,11 +16,15 @@ namespace DaemonVision.Identity
     /// <summary>
     /// Manages biometric authentication for D-Space access.
     /// On real hardware, integrates with device biometric APIs (fingerprint, face, iris).
-    /// The Daemon required multi-factor biometric auth to prevent unauthorized access.
     /// </summary>
     public class BiometricAuth : SubsystemBase
     {
         public override string Name => "BiometricAuth";
+
+        private const string AndroidBridgeClass = "com.daemon.vision.dspace.DSpaceBiometric";
+        private const int BridgeStateInProgress = 1;
+        private const int BridgeStateSuccess = 2;
+        private const int BridgeStateFailed = 3;
 
         public bool IsAuthenticated { get; private set; }
         public AuthMethod LastAuthMethod { get; private set; }
@@ -29,9 +37,15 @@ namespace DaemonVision.Identity
         [SerializeField] private float sessionTimeoutSeconds = 3600f; // 1 hour
         [SerializeField] private bool requirePeriodicReauth = true;
         [SerializeField] private float reauthIntervalSeconds = 1800f; // 30 min
+        [SerializeField] private float promptTimeoutSeconds = 60f;
+
+        [Tooltip("When no biometric hardware is usable, succeed anyway. Keep this on for " +
+                 "Editor and phone testing; turn it off for a hardened build.")]
+        [SerializeField] private bool allowDevelopmentBypass = true;
 
         private float timeSinceLastAuth;
         private float sessionStartTime;
+        private bool authInProgress;
 
         protected override Task OnInitialize()
         {
@@ -44,23 +58,32 @@ namespace DaemonVision.Identity
         /// </summary>
         public async Task<bool> Authenticate()
         {
+            if (authInProgress)
+            {
+                Warn("Authentication already in progress.");
+                return false;
+            }
+
+            authInProgress = true;
             Log("Requesting biometric authentication...");
 
-            // Check platform capabilities and attempt auth
-            bool success = false;
-            AuthMethod method = AuthMethod.None;
+            bool success;
+            AuthMethod method;
 
+            try
+            {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            success = await AuthenticateAndroid();
-            method = AuthMethod.DeviceBiometric;
+                (success, method) = await AuthenticateAndroid();
 #elif UNITY_IOS && !UNITY_EDITOR
-            success = await AuthenticateIOS();
-            method = AuthMethod.DeviceBiometric;
+                (success, method) = await AuthenticateIOS();
 #else
-            // In editor or unsupported platform, use PIN fallback
-            success = await AuthenticateWithPIN();
-            method = AuthMethod.PIN;
+                (success, method) = await AuthenticateWithFallback("no platform biometrics in this build");
 #endif
+            }
+            finally
+            {
+                authInProgress = false;
+            }
 
             if (success)
             {
@@ -81,8 +104,8 @@ namespace DaemonVision.Identity
         }
 
         /// <summary>
-        /// Revoke authentication — locks D-Space access.
-        /// In the Daemon, removing glasses or detecting coercion triggers this.
+        /// Revoke authentication and lock D-Space access.
+        /// In the Daemon, removing the glasses or detecting coercion triggers this.
         /// </summary>
         public void RevokeAuth()
         {
@@ -100,7 +123,6 @@ namespace DaemonVision.Identity
 
             timeSinceLastAuth += deltaTime;
 
-            // Session timeout
             if (Time.time - sessionStartTime > sessionTimeoutSeconds)
             {
                 Warn("Session timeout. Re-authentication required.");
@@ -108,64 +130,92 @@ namespace DaemonVision.Identity
                 return;
             }
 
-            // Periodic re-auth check
             if (requirePeriodicReauth && timeSinceLastAuth > reauthIntervalSeconds)
             {
                 Warn("Periodic re-authentication required.");
-                // Don't revoke — just flag for re-auth on next sensitive action
+                // Don't revoke; flag for re-auth on the next sensitive action
                 timeSinceLastAuth = 0f;
             }
         }
 
-        // Platform-specific auth implementations
+        // ----------------------------------------------------------------
+        //  Platform implementations
+        // ----------------------------------------------------------------
 
-        private Task<bool> AuthenticateAndroid()
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private async Task<(bool, AuthMethod)> AuthenticateAndroid()
         {
-            // Uses Android BiometricPrompt API via Unity plugin
-            // In production, call into AndroidJavaObject for BiometricPrompt
             try
             {
                 using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
                 using (var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity"))
+                using (var bridge = new AndroidJavaClass(AndroidBridgeClass))
                 {
-                    // Call companion app's biometric bridge
-                    using (var biometricHelper = new AndroidJavaClass("com.daemon.vision.companion.BiometricBridge"))
+                    if (!bridge.CallStatic<bool>("isAvailable", activity))
+                        return await AuthenticateWithFallback("no enrolled biometrics or screen lock");
+
+                    bridge.CallStatic("reset");
+                    bridge.CallStatic("authenticate", activity,
+                        "D-Space Authentication", "Verify identity to access the darknet");
+
+                    float deadline = Time.realtimeSinceStartup + promptTimeoutSeconds;
+                    while (Time.realtimeSinceStartup < deadline)
                     {
-                        return Task.FromResult(biometricHelper.CallStatic<bool>("authenticate", activity));
+                        int state = bridge.CallStatic<int>("getState");
+                        if (state == BridgeStateSuccess)
+                            return (true, AuthMethod.DeviceBiometric);
+                        if (state == BridgeStateFailed)
+                        {
+                            Warn($"Biometric prompt failed: {bridge.CallStatic<string>("getLastError")}");
+                            return (false, AuthMethod.DeviceBiometric);
+                        }
+                        if (state != BridgeStateInProgress)
+                            break;
+
+                        await Task.Delay(100);
                     }
+
+                    Warn("Biometric prompt timed out.");
+                    return (false, AuthMethod.DeviceBiometric);
                 }
             }
             catch (Exception ex)
             {
                 Error($"Android biometric auth error: {ex.Message}");
-                return Task.FromResult(false);
+                return await AuthenticateWithFallback("bridge error");
             }
         }
+#endif
 
-        private Task<bool> AuthenticateIOS()
+#if UNITY_IOS && !UNITY_EDITOR
+        private Task<(bool, AuthMethod)> AuthenticateIOS()
         {
-            // Uses iOS LocalAuthentication framework via native plugin
-            // Placeholder — requires native Objective-C plugin
-            Log("iOS biometric auth not yet implemented. Using PIN fallback.");
-            return AuthenticateWithPIN();
+            // LocalAuthentication needs a native Objective-C plugin; not wired up yet.
+            return AuthenticateWithFallback("iOS LocalAuthentication plugin not implemented");
         }
+#endif
 
-        private Task<bool> AuthenticateWithPIN()
+        private Task<(bool, AuthMethod)> AuthenticateWithFallback(string reason)
         {
-            // Fallback PIN authentication — for development/testing
-            // In production, this would show a PIN entry UI
-            Log("Using development bypass authentication.");
-            return Task.FromResult(true);
+            if (allowDevelopmentBypass)
+            {
+                Warn($"Biometric auth unavailable ({reason}). Development bypass is ON; granting access.");
+                return Task.FromResult((true, AuthMethod.DevelopmentBypass));
+            }
+
+            Warn($"Biometric auth unavailable ({reason}) and development bypass is OFF.");
+            return Task.FromResult((false, AuthMethod.None));
         }
     }
 
     public enum AuthMethod
     {
         None,
-        DeviceBiometric,  // Fingerprint, face, iris via device API
-        PIN,              // Numeric PIN fallback
-        Pattern,          // Gesture pattern
-        VoicePrint,       // Voice biometric (advanced)
-        RetinalScan       // The Daemon's preferred method
+        DeviceBiometric,    // Fingerprint, face, iris via device API
+        PIN,                // Numeric PIN fallback (UI not implemented yet)
+        Pattern,            // Gesture pattern
+        VoicePrint,         // Voice biometric (advanced)
+        RetinalScan,        // The Daemon's preferred method
+        DevelopmentBypass   // Editor and test builds only
     }
 }

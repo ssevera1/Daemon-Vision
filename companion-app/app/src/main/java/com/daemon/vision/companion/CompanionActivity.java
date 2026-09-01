@@ -30,6 +30,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -45,25 +46,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * This app runs on a standard Android phone and acts as a sensor relay for
  * AR glasses running the D-Space application. It provides:
  * <ul>
- *   <li>GPS location relay via UDP</li>
- *   <li>Auto-discovery of glasses via UDP broadcast beacons</li>
+ *   <li>GPS location relay via UDP (port {@link RelayProtocol#GPS_RELAY_PORT})</li>
+ *   <li>Auto-discovery of glasses from their D-Space beacons (port {@link RelayProtocol#DISCOVERY_PORT})</li>
  *   <li>Connection status monitoring</li>
- *   <li>Peer count display</li>
+ *   <li>Peer count display, echoed back by the glasses in each ACK</li>
  * </ul>
  */
 public class CompanionActivity extends AppCompatActivity implements LocationListener {
 
     private static final String TAG = "DaemonVision.Companion";
 
-    // Network constants
-    private static final int RELAY_PORT = 7770;
-    private static final int DISCOVERY_PORT = 7771;
-    private static final String BEACON_PREFIX = "DSPACE:";
     private static final int BEACON_LISTEN_TIMEOUT_MS = 5000;
     private static final int GPS_RELAY_INTERVAL_MS = 500;
+    private static final int UI_REFRESH_MS = 500;
 
     // Permission request codes
     private static final int PERMISSION_REQUEST_CODE = 1001;
+    private static final int BACKGROUND_LOCATION_REQUEST_CODE = 1002;
 
     // ── UI Elements ──
     private View connectionIndicator;
@@ -89,14 +88,23 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     private volatile double currentLon = 0.0;
     private volatile double currentAlt = 0.0;
     private volatile float currentAccuracy = 0.0f;
+    private volatile float currentBearing = 0.0f;
     private volatile int peerCount = 0;
     private volatile long lastRelayTimestamp = 0;
+    private volatile boolean locationUpdatesActive = false;
 
     private LocationManager locationManager;
     private ExecutorService networkExecutor;
     private Handler uiHandler;
     private DatagramSocket relaySocket;
-    private Runnable relayRunnable;
+    private final Runnable uiRefresh = new Runnable() {
+        @Override
+        public void run() {
+            updateGpsDisplay();
+            updateRelayDisplay();
+            uiHandler.postDelayed(this, UI_REFRESH_MS);
+        }
+    };
 
     // ──────────────────────────────────────────────────────────
     // Lifecycle
@@ -111,25 +119,16 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         window.setStatusBarColor(0xFF0A0A14);
         window.setNavigationBarColor(0xFF0A0A14);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.getDecorView().setSystemUiVisibility(0); // Clear light flags for dark theme
-        }
 
         setContentView(R.layout.activity_companion);
 
-        // Initialize core services
         uiHandler = new Handler(Looper.getMainLooper());
         networkExecutor = Executors.newFixedThreadPool(3);
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
 
-        // Bind UI elements
         bindViews();
         setupListeners();
-
-        // Request permissions
         requestRequiredPermissions();
-
-        // Display local IP
         updateLocalIpDisplay();
 
         Log.i(TAG, "CompanionActivity created.");
@@ -139,19 +138,23 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     protected void onResume() {
         super.onResume();
         startLocationUpdates();
-        startUiUpdateLoop();
+        uiHandler.removeCallbacks(uiRefresh);
+        uiHandler.post(uiRefresh);
+        updateLocalIpDisplay();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        // Keep relay running in background, but stop UI updates
+        // The relay thread keeps running; only the screen refresh stops.
+        uiHandler.removeCallbacks(uiRefresh);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         stopRelay();
+        uiHandler.removeCallbacksAndMessages(null);
         if (networkExecutor != null && !networkExecutor.isShutdown()) {
             networkExecutor.shutdownNow();
         }
@@ -192,65 +195,53 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     // Permissions
     // ──────────────────────────────────────────────────────────
 
+    private boolean hasPermission(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void requestRequiredPermissions() {
         List<String> permissionsNeeded = new ArrayList<>();
 
-        // Location
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
             permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION);
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (!hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
             permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
 
-        // Camera (for potential future QR code pairing)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
+        // Camera (for future QR code pairing)
+        if (!hasPermission(Manifest.permission.CAMERA)) {
             permissionsNeeded.add(Manifest.permission.CAMERA);
         }
 
-        // Bluetooth
+        // Bluetooth / nearby devices
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_SCAN);
             }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT);
             }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
-                    != PackageManager.PERMISSION_GRANTED) {
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasPermission(Manifest.permission.NEARBY_WIFI_DEVICES)) {
                 permissionsNeeded.add(Manifest.permission.NEARBY_WIFI_DEVICES);
             }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH)
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsNeeded.add(Manifest.permission.BLUETOOTH);
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN)
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsNeeded.add(Manifest.permission.BLUETOOTH_ADMIN);
+            if (!hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+                permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS);
             }
         }
 
-        // Background location (for continued relay)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED) {
-                // Request background location separately after foreground is granted
-                permissionsNeeded.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
-            }
-        }
+        // Background location must be requested on its own after foreground
+        // location is granted. On Android 11+ a combined request is silently
+        // ignored by the system, so it is handled in onRequestPermissionsResult.
 
         if (!permissionsNeeded.isEmpty()) {
             ActivityCompat.requestPermissions(this,
                     permissionsNeeded.toArray(new String[0]),
                     PERMISSION_REQUEST_CODE);
         } else {
-            onAllPermissionsGranted();
+            onForegroundPermissionsGranted();
         }
     }
 
@@ -258,26 +249,33 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            boolean allGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                    break;
-                }
-            }
-            if (allGranted) {
-                onAllPermissionsGranted();
+            if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                onForegroundPermissionsGranted();
             } else {
-                Log.w(TAG, "Some permissions were denied. Relay functionality may be limited.");
-                updateConnectionStatus(false, "Permissions incomplete");
+                Log.w(TAG, "Fine location was denied. GPS relay cannot run.");
+                updateConnectionStatus(false, "Location permission required");
             }
+        } else if (requestCode == BACKGROUND_LOCATION_REQUEST_CODE) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            Log.i(TAG, granted
+                    ? "Background location granted; relay continues with the screen off."
+                    : "Background location denied; relay pauses when the app is not visible.");
         }
     }
 
-    private void onAllPermissionsGranted() {
-        Log.i(TAG, "All required permissions granted.");
+    private void onForegroundPermissionsGranted() {
+        Log.i(TAG, "Foreground permissions granted.");
         startLocationUpdates();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && !hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},
+                    BACKGROUND_LOCATION_REQUEST_CODE);
+        }
     }
 
     // ──────────────────────────────────────────────────────────
@@ -285,30 +283,31 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     // ──────────────────────────────────────────────────────────
 
     private void startLocationUpdates() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
+        if (locationUpdatesActive) return;
+        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return;
+
+        try {
+            locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    500,  // min time interval in ms
+                    0.5f, // min distance in meters
+                    this
+            );
+
+            // Also request the network provider for a faster initial fix
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
-                        500,  // min time interval in ms
-                        0.5f, // min distance in meters
+                        LocationManager.NETWORK_PROVIDER,
+                        1000,
+                        1.0f,
                         this
                 );
-
-                // Also request network provider for faster initial fix
-                if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                    locationManager.requestLocationUpdates(
-                            LocationManager.NETWORK_PROVIDER,
-                            1000,
-                            1.0f,
-                            this
-                    );
-                }
-
-                Log.i(TAG, "Location updates started.");
-            } catch (SecurityException e) {
-                Log.e(TAG, "Location permission error: " + e.getMessage());
             }
+
+            locationUpdatesActive = true;
+            Log.i(TAG, "Location updates started.");
+        } catch (SecurityException e) {
+            Log.e(TAG, "Location permission error: " + e.getMessage());
         }
     }
 
@@ -318,6 +317,9 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
         currentLon = location.getLongitude();
         currentAlt = location.getAltitude();
         currentAccuracy = location.getAccuracy();
+        if (location.hasBearing()) {
+            currentBearing = location.getBearing();
+        }
 
         Log.v(TAG, String.format(Locale.US,
                 "Location: %.6f, %.6f, alt=%.1f, acc=%.1f",
@@ -339,7 +341,7 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
     // ──────────────────────────────────────────────────────────
 
     private void startRelay() {
-        String targetIp = glassesIpInput.getText().toString().trim();
+        final String targetIp = glassesIpInput.getText().toString().trim();
         if (targetIp.isEmpty()) {
             glassesIpInput.setError("Enter glasses IP address");
             return;
@@ -350,44 +352,48 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
             return;
         }
 
-        Log.i(TAG, "Starting GPS relay to " + targetIp + ":" + RELAY_PORT);
-        updateConnectionStatus(true, "Relaying to " + targetIp);
+        Log.i(TAG, "Starting GPS relay to " + targetIp + ":" + RelayProtocol.GPS_RELAY_PORT);
+        updateConnectionStatus(false, "Connecting to " + targetIp);
 
         startRelayButton.setEnabled(false);
         stopRelayButton.setEnabled(true);
 
         networkExecutor.submit(() -> {
+            DatagramSocket socket = null;
             try {
-                relaySocket = new DatagramSocket();
+                socket = new DatagramSocket();
+                socket.setSoTimeout(GPS_RELAY_INTERVAL_MS);
+                relaySocket = socket;
                 InetAddress targetAddress = InetAddress.getByName(targetIp);
 
                 while (isRelaying.get()) {
-                    // Build GPS payload: DSPACE_GPS|lat|lon|alt|accuracy|timestamp
-                    String payload = String.format(Locale.US,
-                            "DSPACE_GPS|%.8f|%.8f|%.4f|%.2f|%d",
+                    String payload = RelayProtocol.buildGpsPacket(
                             currentLat, currentLon, currentAlt, currentAccuracy,
-                            System.currentTimeMillis());
+                            currentBearing, System.currentTimeMillis());
 
-                    byte[] data = payload.getBytes();
-                    DatagramPacket packet = new DatagramPacket(
-                            data, data.length, targetAddress, RELAY_PORT);
-
-                    relaySocket.send(packet);
+                    byte[] data = payload.getBytes(StandardCharsets.UTF_8);
+                    socket.send(new DatagramPacket(data, data.length, targetAddress,
+                            RelayProtocol.GPS_RELAY_PORT));
                     lastRelayTimestamp = System.currentTimeMillis();
 
-                    // Listen for response to get peer count
+                    // The glasses answer every fix with an ACK carrying the mesh peer count.
                     try {
                         byte[] responseBuffer = new byte[256];
                         DatagramPacket responsePacket = new DatagramPacket(
                                 responseBuffer, responseBuffer.length);
-                        relaySocket.setSoTimeout(GPS_RELAY_INTERVAL_MS);
-                        relaySocket.receive(responsePacket);
+                        socket.receive(responsePacket);
 
                         String response = new String(responsePacket.getData(),
-                                0, responsePacket.getLength());
-                        parseRelayResponse(response);
+                                0, responsePacket.getLength(), StandardCharsets.UTF_8);
+                        int peers = RelayProtocol.parseAckPeerCount(response);
+                        if (peers >= 0) {
+                            peerCount = peers;
+                            if (!isConnected) {
+                                updateConnectionStatus(true, "Relaying to " + targetIp);
+                            }
+                        }
                     } catch (SocketTimeoutException e) {
-                        // Expected when no response within interval
+                        // No ACK this round; the glasses may be busy or out of range.
                     }
 
                     Thread.sleep(GPS_RELAY_INTERVAL_MS);
@@ -398,9 +404,10 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
                     uiHandler.post(() -> updateConnectionStatus(false, "Relay error"));
                 }
             } finally {
-                if (relaySocket != null && !relaySocket.isClosed()) {
-                    relaySocket.close();
+                if (socket != null && !socket.isClosed()) {
+                    socket.close();
                 }
+                relaySocket = null;
             }
         });
     }
@@ -413,27 +420,15 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
         Log.i(TAG, "Stopping GPS relay.");
         updateConnectionStatus(false, "Disconnected");
 
-        if (relaySocket != null && !relaySocket.isClosed()) {
-            relaySocket.close();
+        DatagramSocket socket = relaySocket;
+        if (socket != null && !socket.isClosed()) {
+            socket.close();
         }
 
         uiHandler.post(() -> {
             startRelayButton.setEnabled(true);
             stopRelayButton.setEnabled(false);
         });
-    }
-
-    private void parseRelayResponse(String response) {
-        // Expected format: DSPACE_ACK|peerCount|timestamp
-        try {
-            String[] parts = response.split("\\|");
-            if (parts.length >= 2 && "DSPACE_ACK".equals(parts[0])) {
-                peerCount = Integer.parseInt(parts[1]);
-                isConnected = true;
-            }
-        } catch (NumberFormatException e) {
-            Log.w(TAG, "Invalid relay response: " + response);
-        }
     }
 
     // ──────────────────────────────────────────────────────────
@@ -456,13 +451,13 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
                 socket = new DatagramSocket(null);
                 socket.setReuseAddress(true);
                 socket.setBroadcast(true);
-                socket.bind(new InetSocketAddress(DISCOVERY_PORT));
+                socket.bind(new InetSocketAddress(RelayProtocol.DISCOVERY_PORT));
                 socket.setSoTimeout(BEACON_LISTEN_TIMEOUT_MS);
 
-                byte[] buffer = new byte[512];
+                byte[] buffer = new byte[1024];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 
-                Log.i(TAG, "Listening for DSPACE beacons on port " + DISCOVERY_PORT);
+                Log.i(TAG, "Listening for DSPACE beacons on port " + RelayProtocol.DISCOVERY_PORT);
 
                 long scanStart = System.currentTimeMillis();
                 String foundIp = null;
@@ -470,15 +465,16 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
                 while (System.currentTimeMillis() - scanStart < BEACON_LISTEN_TIMEOUT_MS * 2) {
                     try {
                         socket.receive(packet);
-                        String message = new String(packet.getData(), 0, packet.getLength());
+                        String message = new String(packet.getData(), 0, packet.getLength(),
+                                StandardCharsets.UTF_8);
 
-                        if (message.startsWith(BEACON_PREFIX)) {
+                        if (message.startsWith(RelayProtocol.BEACON_PREFIX)) {
                             foundIp = packet.getAddress().getHostAddress();
-                            String deviceInfo = message.substring(BEACON_PREFIX.length());
+                            String deviceInfo = message.substring(RelayProtocol.BEACON_PREFIX.length());
                             Log.i(TAG, "Found D-Space glasses at " + foundIp + " (" + deviceInfo + ")");
 
                             final String ip = foundIp;
-                            final String info = deviceInfo;
+                            final String info = summarizeBeacon(deviceInfo);
                             uiHandler.post(() -> {
                                 glassesIpInput.setText(ip);
                                 networkStatusText.setText("Found: " + info + " @ " + ip);
@@ -486,7 +482,7 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
                             break;
                         }
                     } catch (SocketTimeoutException e) {
-                        // Continue scanning
+                        // Keep listening until the overall scan window closes
                     }
                 }
 
@@ -510,6 +506,15 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
         });
     }
 
+    /** Pull the callsign out of the beacon JSON without a JSON dependency. */
+    private static String summarizeBeacon(String beaconJson) {
+        int idx = beaconJson.indexOf("\"Callsign\":\"");
+        if (idx < 0) return "D-Space";
+        int start = idx + "\"Callsign\":\"".length();
+        int end = beaconJson.indexOf('"', start);
+        return end > start ? beaconJson.substring(start, end) : "D-Space";
+    }
+
     // ──────────────────────────────────────────────────────────
     // UI Updates
     // ──────────────────────────────────────────────────────────
@@ -525,18 +530,6 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
                 connectionStatusText.setTextColor(connected ? 0xFF00E5CC : 0xFFFF3355);
             }
         });
-    }
-
-    private void startUiUpdateLoop() {
-        Runnable uiUpdate = new Runnable() {
-            @Override
-            public void run() {
-                updateGpsDisplay();
-                updateRelayDisplay();
-                uiHandler.postDelayed(this, 500);
-            }
-        };
-        uiHandler.post(uiUpdate);
     }
 
     private void updateGpsDisplay() {
@@ -566,20 +559,20 @@ public class CompanionActivity extends AppCompatActivity implements LocationList
 
     @SuppressWarnings("deprecation")
     private void updateLocalIpDisplay() {
-        if (localIpText != null) {
-            try {
-                WifiManager wifiManager = (WifiManager) getApplicationContext()
-                        .getSystemService(WIFI_SERVICE);
-                if (wifiManager != null && wifiManager.getConnectionInfo() != null) {
-                    int ipInt = wifiManager.getConnectionInfo().getIpAddress();
-                    String ipStr = Formatter.formatIpAddress(ipInt);
-                    localIpText.setText("Local IP: " + ipStr);
-                } else {
-                    localIpText.setText("Local IP: unavailable");
-                }
-            } catch (Exception e) {
-                localIpText.setText("Local IP: error");
+        if (localIpText == null) return;
+
+        try {
+            WifiManager wifiManager = (WifiManager) getApplicationContext()
+                    .getSystemService(WIFI_SERVICE);
+            if (wifiManager != null && wifiManager.getConnectionInfo() != null) {
+                int ipInt = wifiManager.getConnectionInfo().getIpAddress();
+                String ipStr = Formatter.formatIpAddress(ipInt);
+                localIpText.setText("Local IP: " + ipStr);
+            } else {
+                localIpText.setText("Local IP: unavailable");
             }
+        } catch (Exception e) {
+            localIpText.setText("Local IP: error");
         }
     }
 }

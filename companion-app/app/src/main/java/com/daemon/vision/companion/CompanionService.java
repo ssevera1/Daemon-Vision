@@ -8,56 +8,56 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.net.wifi.WifiManager;
 import android.os.Build;
-import android.os.IBinder;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * CompanionService — Runs as a foreground service on the phone to relay
- * GPS, camera data, and biometric auth to connected AR glasses.
- *
- * For glasses without GPS (Meta Quest, XREAL), the companion phone
- * provides location data over WiFi/Bluetooth.
- *
- * Architecture inspired by the Daemon's distributed sensor network.
+ * CompanionService: runs as a foreground service on the phone to relay GPS fixes
+ * to AR glasses that have no GPS radio of their own (Meta Quest, XREAL, Magic Leap).
+ * <p>
+ * Every fix is sent as one UDP datagram in the format that
+ * {@code CompanionLocationReceiver} on the Unity side parses:
+ * <pre>DSPACE_GPS|lat|lon|alt|accuracy|bearing|unixMillis</pre>
  */
 public class CompanionService extends Service implements LocationListener {
 
     private static final String TAG = "DaemonCompanion";
     private static final String CHANNEL_ID = "daemon_companion_channel";
     private static final int NOTIFICATION_ID = 7733;
-    private static final int GPS_RELAY_PORT = 7735;
     private static final int GPS_UPDATE_INTERVAL_MS = 2000;
     private static final float GPS_MIN_DISTANCE_M = 0.5f;
 
+    public static final String ACTION_START_RELAY = "START_RELAY";
+    public static final String ACTION_STOP_RELAY = "STOP_RELAY";
+    public static final String EXTRA_GLASSES_ADDRESS = "glasses_address";
+    public static final String EXTRA_GLASSES_PORT = "glasses_port";
+
     private LocationManager locationManager;
     private DatagramSocket relaySocket;
-    private InetAddress glassesAddress;
-    private int glassesPort = GPS_RELAY_PORT;
+    private ExecutorService sendExecutor;
+    private volatile InetAddress glassesAddress;
+    private volatile int glassesPort = RelayProtocol.GPS_RELAY_PORT;
     private volatile boolean isRunning = false;
-
-    private double lastLatitude;
-    private double lastLongitude;
-    private double lastAltitude;
-    private float lastAccuracy;
-    private float lastBearing;
 
     @Override
     public void onCreate() {
@@ -65,9 +65,10 @@ public class CompanionService extends Service implements LocationListener {
         Log.i(TAG, "Daemon Vision Companion starting...");
 
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, buildNotification("D-Space Companion Active"));
+        startAsForeground(buildNotification("D-Space Companion Active"));
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        sendExecutor = Executors.newSingleThreadExecutor();
 
         try {
             relaySocket = new DatagramSocket();
@@ -76,15 +77,27 @@ public class CompanionService extends Service implements LocationListener {
         }
     }
 
+    /**
+     * Android 14 requires the foreground service type to be passed at start time,
+     * not only declared in the manifest, or the service is killed with
+     * MissingForegroundServiceTypeException.
+     */
+    private void startAsForeground(Notification notification) {
+        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                : 0;
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type);
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
             String action = intent.getAction();
-            if ("START_RELAY".equals(action)) {
-                String targetAddress = intent.getStringExtra("glasses_address");
-                int targetPort = intent.getIntExtra("glasses_port", GPS_RELAY_PORT);
+            if (ACTION_START_RELAY.equals(action)) {
+                String targetAddress = intent.getStringExtra(EXTRA_GLASSES_ADDRESS);
+                int targetPort = intent.getIntExtra(EXTRA_GLASSES_PORT, RelayProtocol.GPS_RELAY_PORT);
                 startRelay(targetAddress, targetPort);
-            } else if ("STOP_RELAY".equals(action)) {
+            } else if (ACTION_STOP_RELAY.equals(action)) {
                 stopRelay();
             }
         }
@@ -92,11 +105,15 @@ public class CompanionService extends Service implements LocationListener {
     }
 
     private void startRelay(String address, int port) {
+        if (address == null || address.trim().isEmpty()) {
+            Log.w(TAG, "startRelay called without a glasses address");
+            return;
+        }
+
         try {
-            glassesAddress = InetAddress.getByName(address);
+            glassesAddress = InetAddress.getByName(address.trim());
             glassesPort = port;
 
-            // Start GPS updates
             if (ActivityCompat.checkSelfPermission(this,
                     Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                 locationManager.requestLocationUpdates(
@@ -104,15 +121,22 @@ public class CompanionService extends Service implements LocationListener {
                         GPS_UPDATE_INTERVAL_MS,
                         GPS_MIN_DISTANCE_M,
                         this);
-                locationManager.requestLocationUpdates(
-                        LocationManager.FUSED_PROVIDER,
-                        GPS_UPDATE_INTERVAL_MS,
-                        GPS_MIN_DISTANCE_M,
-                        this);
+
+                // The fused provider only exists on Android 12+.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                        && locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                            LocationManager.FUSED_PROVIDER,
+                            GPS_UPDATE_INTERVAL_MS,
+                            GPS_MIN_DISTANCE_M,
+                            this);
+                }
+            } else {
+                Log.w(TAG, "Fine location permission missing; relay will start once granted");
             }
 
             isRunning = true;
-            Log.i(TAG, "GPS relay started → " + address + ":" + port);
+            Log.i(TAG, "GPS relay started -> " + address + ":" + port);
             updateNotification("Relaying GPS to glasses at " + address);
 
         } catch (Exception e) {
@@ -122,48 +146,33 @@ public class CompanionService extends Service implements LocationListener {
 
     private void stopRelay() {
         isRunning = false;
-        locationManager.removeUpdates(this);
+        if (locationManager != null) {
+            locationManager.removeUpdates(this);
+        }
         Log.i(TAG, "GPS relay stopped.");
         updateNotification("D-Space Companion Idle");
     }
 
     @Override
     public void onLocationChanged(@NonNull Location location) {
-        lastLatitude = location.getLatitude();
-        lastLongitude = location.getLongitude();
-        lastAltitude = location.getAltitude();
-        lastAccuracy = location.getAccuracy();
-        lastBearing = location.getBearing();
-
-        // Relay to glasses via UDP
         relayLocationToGlasses(location);
     }
 
     private void relayLocationToGlasses(Location location) {
-        if (!isRunning || glassesAddress == null || relaySocket == null) return;
+        if (!isRunning || glassesAddress == null || relaySocket == null || sendExecutor == null) return;
 
-        // JSON payload matching GPSLocation struct in Unity
-        String json = String.format(
-                "{\"lat\":%.8f,\"lon\":%.8f,\"alt\":%.2f,\"acc\":%.1f,\"bearing\":%.1f,\"ts\":%d}",
-                location.getLatitude(),
-                location.getLongitude(),
-                location.getAltitude(),
-                location.getAccuracy(),
-                location.getBearing(),
-                System.currentTimeMillis() / 1000
-        );
+        final String payload = RelayProtocol.buildGpsPacket(location);
+        final byte[] data = payload.getBytes(StandardCharsets.UTF_8);
+        final InetAddress target = glassesAddress;
+        final int port = glassesPort;
 
-        byte[] data = ("DSPACE_GPS:" + json).getBytes(StandardCharsets.UTF_8);
-
-        new Thread(() -> {
+        sendExecutor.submit(() -> {
             try {
-                DatagramPacket packet = new DatagramPacket(
-                        data, data.length, glassesAddress, glassesPort);
-                relaySocket.send(packet);
+                relaySocket.send(new DatagramPacket(data, data.length, target, port));
             } catch (IOException e) {
                 Log.w(TAG, "GPS relay send failed: " + e.getMessage());
             }
-        }).start();
+        });
     }
 
     private Notification buildNotification(String text) {
@@ -207,6 +216,9 @@ public class CompanionService extends Service implements LocationListener {
     @Override
     public void onDestroy() {
         stopRelay();
+        if (sendExecutor != null) {
+            sendExecutor.shutdownNow();
+        }
         if (relaySocket != null) {
             relaySocket.close();
         }

@@ -1,5 +1,8 @@
 # DAEMON VISION — D-Space AR Overlay
 
+[![CI](https://github.com/ssevera1/Daemon-Vision/actions/workflows/ci.yml/badge.svg)](https://github.com/ssevera1/Daemon-Vision/actions/workflows/ci.yml)
+[![Unity Tests](https://github.com/ssevera1/Daemon-Vision/actions/workflows/unity-ci.yml/badge.svg)](https://github.com/ssevera1/Daemon-Vision/actions/workflows/unity-ci.yml)
+
 > *"The Daemon is watching. The Daemon is listening. The Daemon has awakened."*
 > — Daniel Suarez, *Daemon*
 
@@ -32,7 +35,7 @@ This project recreates that vision as a real, sideloadable application for today
 | **Biometric Auth** | Biometrically-keyed HUD glasses (retinal/fingerprint) | Android BiometricPrompt integration |
 | **GPS Anchoring** | Virtual objects anchored to the GPS grid | Equirectangular projection, persistent spatial anchors |
 | **Chat & Voice** | Encrypted darknet communication channels | Public/faction/DM chat, spatial proximity voice |
-| **Person Detection** | HUD identifies people in view | ML-based detection via Unity Sentis (ONNX models) |
+| **Person Detection** | HUD identifies people in view | Unity Sentis 2.x pipeline (needs Unity 6); simulated detector in the Editor |
 | **Compass & Minimap** | Tactical awareness overlay | Cardinal compass strip + radar-style minimap with operative/anchor blips |
 
 ---
@@ -140,9 +143,10 @@ D-Space adapts to each device's capabilities via the GlassesProfile system:
 
 ### Prerequisites
 
-- **Unity 2022.3 LTS** or newer
+- **Unity 2022.3 LTS** (the project pins 2022.3.62f1 in `ProjectSettings/ProjectVersion.txt`)
 - **Android Build Support** module (via Unity Hub)
 - **Android SDK 28+** and **NDK r25+**
+- **JDK 17** for the companion app (Android Gradle Plugin 8)
 - **ADB** for device deployment
 
 ### Build & Deploy
@@ -208,7 +212,29 @@ cd companion-app
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The companion app relays GPS coordinates, provides biometric authentication, and enhances mesh network discovery.
+The companion app relays GPS fixes to the glasses over UDP (port 7735), finds the glasses from their discovery beacons (port 7734), and shows the mesh peer count the glasses report back. See [docs/BUILDING.md](docs/BUILDING.md#network-ports) for the full port table.
+
+---
+
+## Continuous Integration
+
+Every push and pull request runs two workflows:
+
+| Workflow | What it checks |
+|----------|----------------|
+| `ci.yml` | Repository consistency (`tools/ci/validate_project.py`: .meta files, scene GUIDs, JSON, shared port numbers), a Roslyn syntax pass over every C# file under four platform define sets, shellcheck on the build scripts, and a real Gradle build plus lint of the companion app |
+| `unity-ci.yml` | The EditMode test suite under `unity-project/Assets/Tests`, via GameCI. Skipped until a `UNITY_LICENSE` secret exists |
+
+Three more workflows drive the automated improvement loop shared with the other ssevera1 repos: `ai-improvements.yml` proposes one change as a PR, `claude-review-merge.yml` reviews and auto-merges it, `claude-address-review.yml` picks up requested changes, and `pr-janitor.yml` closes stale proposals. They need the `ANTHROPIC_API_KEY`, `GH_PAT` and `CLAUDE_CODE_OAUTH_TOKEN` repository secrets and skip themselves with a warning when those are missing.
+
+To run the checks locally:
+
+```bash
+python tools/ci/validate_project.py
+python tools/unity/generate_meta.py          # after adding files under Assets/
+dotnet run --project tools/ci/CsSyntaxCheck -- unity-project/Assets
+cd companion-app && ./gradlew assembleDebug
+```
 
 ---
 

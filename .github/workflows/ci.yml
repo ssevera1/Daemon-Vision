@@ -1,0 +1,91 @@
+name: CI
+
+# What can be verified without a Unity licence: repository consistency
+# (meta files, scene references, JSON, shared port numbers), a Roslyn syntax
+# pass over every C# file under each platform define set, shell scripts, and a
+# real Gradle build of the Android companion app. Unity EditMode tests run in
+# unity-ci.yml once UNITY_LICENSE is configured.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Project validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install --quiet pyyaml
+
+      - name: Validate repository layout and shared constants
+        run: python tools/ci/validate_project.py
+
+      - name: Shellcheck build tooling
+        run: shellcheck --severity=warning tools/build/*.sh
+
+      - name: Python syntax
+        run: python -m py_compile scripts/ai_improve.py tools/ci/validate_project.py tools/unity/generate_meta.py
+
+  csharp-syntax:
+    name: C# syntax (Roslyn)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Parse every .cs file under Assets
+        run: dotnet run --project tools/ci/CsSyntaxCheck -c Release -- unity-project/Assets
+
+  companion-app:
+    name: Companion app (Gradle)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: companion-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@v3
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Android lint
+        run: ./gradlew lintDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-app-debug
+          path: companion-app/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: companion-lint-report
+          path: companion-app/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14

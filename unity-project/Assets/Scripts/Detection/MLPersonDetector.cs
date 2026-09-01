@@ -1,8 +1,12 @@
 // MLPersonDetector.cs — ML-based person detection pipeline using Unity Sentis
-// Loads a pre-trained ONNX model (MobileNet SSD / YOLO) for real-time person
+// Loads a pre-trained model (MobileNet SSD / YOLO) for real-time person
 // detection. Captures frames from ARCameraManager, runs GPU inference via Sentis,
 // filters for the "person" class (COCO class 0), estimates depth, and projects
 // detections to world space for the PersonDetector to consume.
+//
+// UNITY_SENTIS is defined by DaemonVision.asmdef only when com.unity.sentis 2.x
+// is installed. Sentis 2.x requires Unity 6; on Unity 2022.3 this subsystem
+// compiles to a stub that logs once and stays inactive.
 
 using System;
 using System.Collections.Generic;
@@ -12,7 +16,6 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 using DaemonVision.Core;
 
-// Unity Sentis namespace (formerly Barracuda)
 #if UNITY_SENTIS
 using Unity.Sentis;
 #endif
@@ -29,7 +32,13 @@ namespace DaemonVision.Detection
         public override string Name => "MLPersonDetector";
 
         [Header("Model Settings")]
-        [SerializeField] private string modelFileName = "person_detection.onnx";
+#if UNITY_SENTIS
+        [Tooltip("Imported ONNX model. Preferred over the StreamingAssets fallback.")]
+        [SerializeField] private ModelAsset modelAsset;
+#endif
+        [Tooltip("Fallback: a serialized .sentis file under StreamingAssets/Models/. " +
+                 "Raw .onnx files cannot be loaded at runtime.")]
+        [SerializeField] private string modelFileName = "person_detection.sentis";
         [SerializeField] private int modelInputWidth = 320;
         [SerializeField] private int modelInputHeight = 320;
         [SerializeField] private string modelInputName = "input";
@@ -135,28 +144,40 @@ namespace DaemonVision.Detection
 
         private void LoadModel()
         {
-            string modelPath = System.IO.Path.Combine(
-                Application.streamingAssetsPath, "Models", modelFileName);
-
 #if UNITY_SENTIS
             try
             {
-                runtimeModel = ModelLoader.Load(modelPath);
+                if (modelAsset != null)
+                {
+                    runtimeModel = ModelLoader.Load(modelAsset);
+                    Log($"ML model loaded from asset: {modelAsset.name}");
+                }
+                else
+                {
+                    // Note: on Android, StreamingAssets lives inside the APK and is not
+                    // a plain file path. Assign a ModelAsset instead for device builds.
+                    string modelPath = System.IO.Path.Combine(
+                        Application.streamingAssetsPath, "Models", modelFileName);
+                    if (!System.IO.File.Exists(modelPath))
+                        throw new System.IO.FileNotFoundException("No model asset assigned and no file at path.", modelPath);
+
+                    runtimeModel = ModelLoader.Load(modelPath);
+                    Log($"ML model loaded from file: {modelFileName}");
+                }
+
                 worker = new Worker(runtimeModel, BackendType.GPUCompute);
                 modelLoaded = true;
-                Log($"ML model loaded: {modelFileName} ({modelInputWidth}x{modelInputHeight})");
+                Log($"ML inference ready ({modelInputWidth}x{modelInputHeight}, {targetFPS:F0} fps target)");
             }
             catch (Exception ex)
             {
-                Warn($"Failed to load ML model from '{modelPath}': {ex.Message}. " +
-                     "Person detection will be disabled. Ensure the ONNX model exists in " +
-                     "StreamingAssets/Models/");
+                Warn($"Failed to load ML model: {ex.Message}. Person detection is disabled " +
+                     "until a ModelAsset is assigned on MLPersonDetector.");
                 modelLoaded = false;
             }
 #else
-            // Sentis not available — gracefully disable
-            Warn("Unity Sentis package not installed. ML person detection disabled. " +
-                 "Install com.unity.sentis via Package Manager.");
+            Warn("Unity Sentis 2.x is not installed (it requires Unity 6). " +
+                 "ML person detection is disabled; the simulated detector still runs in the Editor.");
             modelLoaded = false;
 #endif
         }
@@ -348,14 +369,15 @@ namespace DaemonVision.Detection
                     // Execute inference
                     worker.Schedule(inputTensor);
 
-                    // Read output tensor
-                    using (var outputTensor = worker.PeekOutput(modelOutputName) as Tensor<float>)
+                    // PeekOutput returns a tensor the worker still owns (do not dispose it),
+                    // and its data lives on the GPU. ReadbackAndClone() gives a CPU copy
+                    // that the indexer can read; that copy is ours to dispose.
+                    var outputTensor = worker.PeekOutput(modelOutputName) as Tensor<float>;
+                    if (outputTensor != null)
                     {
-                        if (outputTensor != null)
+                        using (var cpuTensor = outputTensor.ReadbackAndClone())
                         {
-                            // Ensure data is on CPU for reading
-                            outputTensor.ReadbackAndClone();
-                            ParseModelOutput(outputTensor);
+                            ParseModelOutput(cpuTensor);
                         }
                     }
                 }

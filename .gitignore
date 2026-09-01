@@ -43,3 +43,13 @@ companion-app/local.properties
 
 # Build outputs
 builds/
+
+# CI tooling build products
+tools/ci/CsSyntaxCheck/bin/
+tools/ci/CsSyntaxCheck/obj/
+
+# Companion app native build cache
+companion-app/app/.cxx/
+
+# Python bytecode
+__pycache__/

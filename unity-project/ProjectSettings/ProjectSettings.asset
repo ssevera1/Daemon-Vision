@@ -150,9 +150,9 @@ PlayerSettings:
   androidSupportedAspectRatio: 1
   androidMaxAspectRatio: 2.1
   applicationIdentifier:
-    Android: com.daemonvision.dspace
-    Standalone: com.daemonvision.dspace
-    iPhone: com.daemonvision.dspace
+    Android: com.daemon.vision.dspace
+    Standalone: com.daemon.vision.dspace
+    iPhone: com.daemon.vision.dspace
   buildNumber:
     Standalone: 0
     VisionOS: 0

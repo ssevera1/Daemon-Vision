@@ -1,6 +1,11 @@
-// DarknetProtocol.cs — Encrypted communication protocol for the darknet
+// DarknetProtocol.cs - Encrypted communication protocol for the darknet
 // All D-Space communication is encrypted end-to-end. The Daemon's network
 // uses strong encryption to prevent interception and ensure operative privacy.
+//
+// Wire format produced by Encrypt():
+//   [version:1] [keyLen:2 little-endian] [RSA(aesKey)] [iv:16] [AES-CBC(plaintext)]
+// The IV is not secret, so it travels in the clear; only the AES key is wrapped
+// with the recipient's RSA public key.
 
 using System;
 using System.Security.Cryptography;
@@ -15,26 +20,43 @@ namespace DaemonVision.Network
     {
         public override string Name => "DarknetProtocol";
 
+        public const byte WireVersion = 1;
+        private const int RsaKeySizeBits = 2048;
+        private const int AesKeySizeBits = 256;
+        private const int IvLength = 16;
+        private const int HeaderLength = 1 + 2;
+        private const string PrivateKeyPref = "darknet_private_key";
+
+        // OAEP with SHA-1 is the strongest padding RSACryptoServiceProvider supports
+        // on Mono, the runtime Unity ships on every player platform. OaepSHA256
+        // throws CryptographicException there, which made every Encrypt() call
+        // fail on device. SHA-1 inside OAEP is still considered sound because the
+        // hash is used as a mask generator, not for collision resistance.
+        private static readonly RSAEncryptionPadding KeyPadding = RSAEncryptionPadding.OaepSHA1;
+
         [Header("Protocol Settings")]
         [SerializeField] private int protocolVersion = 1;
 
-        // Local key pair for encrypted communication
         private RSACryptoServiceProvider localKeyPair;
         private string localPublicKey;
 
+        public int ProtocolVersion => protocolVersion;
+        public bool HasKeys => localKeyPair != null;
+
         protected override Task OnInitialize()
         {
-            // Generate or load RSA key pair for this operative
-            string storedKey = PlayerPrefs.GetString("darknet_private_key", "");
+            string storedKey = PlayerPrefs.GetString(PrivateKeyPref, "");
             if (!string.IsNullOrEmpty(storedKey))
             {
                 try
                 {
-                    localKeyPair = new RSACryptoServiceProvider(2048);
-                    localKeyPair.FromXmlString(storedKey);
+                    var rsa = new RSACryptoServiceProvider(RsaKeySizeBits);
+                    rsa.FromXmlString(storedKey);
+                    localKeyPair = rsa;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Warn($"Stored key pair could not be loaded ({ex.Message}). Generating a new one.");
                     GenerateNewKeyPair();
                 }
             }
@@ -50,52 +72,14 @@ namespace DaemonVision.Network
 
         /// <summary>
         /// Encrypt a message for a specific recipient using their public key.
-        /// Uses hybrid encryption: AES for data, RSA for AES key.
+        /// Hybrid scheme: AES-256-CBC for the payload, RSA-OAEP for the AES key.
+        /// Returns null (and logs) on failure.
         /// </summary>
         public byte[] Encrypt(string plaintext, string recipientPublicKey)
         {
             try
             {
-                // Generate random AES key
-                using (var aes = Aes.Create())
-                {
-                    aes.GenerateKey();
-                    aes.GenerateIV();
-
-                    // Encrypt the message with AES
-                    byte[] encrypted;
-                    using (var encryptor = aes.CreateEncryptor())
-                    {
-                        byte[] plainBytes = Encoding.UTF8.GetBytes(plaintext);
-                        encrypted = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-                    }
-
-                    // Encrypt the AES key with recipient's RSA public key
-                    using (var rsa = new RSACryptoServiceProvider(2048))
-                    {
-                        rsa.FromXmlString(recipientPublicKey);
-                        byte[] encryptedKey = rsa.Encrypt(aes.Key, RSAEncryptionPadding.OaepSHA256);
-                        byte[] encryptedIV = rsa.Encrypt(aes.IV, RSAEncryptionPadding.OaepSHA256);
-
-                        // Pack: [keyLen(4)] [key] [ivLen(4)] [iv] [data]
-                        byte[] result = new byte[8 + encryptedKey.Length + encryptedIV.Length + encrypted.Length];
-                        int offset = 0;
-
-                        BitConverter.GetBytes(encryptedKey.Length).CopyTo(result, offset);
-                        offset += 4;
-                        encryptedKey.CopyTo(result, offset);
-                        offset += encryptedKey.Length;
-
-                        BitConverter.GetBytes(encryptedIV.Length).CopyTo(result, offset);
-                        offset += 4;
-                        encryptedIV.CopyTo(result, offset);
-                        offset += encryptedIV.Length;
-
-                        encrypted.CopyTo(result, offset);
-
-                        return result;
-                    }
-                }
+                return EncryptForRecipient(plaintext, recipientPublicKey);
             }
             catch (Exception ex)
             {
@@ -105,49 +89,20 @@ namespace DaemonVision.Network
         }
 
         /// <summary>
-        /// Decrypt a message sent to us using our private key.
+        /// Decrypt a message that was encrypted with our public key.
+        /// Returns null (and logs) on malformed input or a key mismatch.
         /// </summary>
         public string Decrypt(byte[] cipherData)
         {
+            if (localKeyPair == null)
+            {
+                Error("Decrypt called before the key pair was loaded.");
+                return null;
+            }
+
             try
             {
-                int offset = 0;
-
-                // Unpack encrypted AES key
-                int keyLen = BitConverter.ToInt32(cipherData, offset);
-                offset += 4;
-                byte[] encryptedKey = new byte[keyLen];
-                Array.Copy(cipherData, offset, encryptedKey, 0, keyLen);
-                offset += keyLen;
-
-                // Unpack encrypted IV
-                int ivLen = BitConverter.ToInt32(cipherData, offset);
-                offset += 4;
-                byte[] encryptedIV = new byte[ivLen];
-                Array.Copy(cipherData, offset, encryptedIV, 0, ivLen);
-                offset += ivLen;
-
-                // Encrypted data
-                byte[] encryptedData = new byte[cipherData.Length - offset];
-                Array.Copy(cipherData, offset, encryptedData, 0, encryptedData.Length);
-
-                // Decrypt AES key and IV with our private key
-                byte[] aesKey = localKeyPair.Decrypt(encryptedKey, RSAEncryptionPadding.OaepSHA256);
-                byte[] aesIV = localKeyPair.Decrypt(encryptedIV, RSAEncryptionPadding.OaepSHA256);
-
-                // Decrypt message with AES
-                using (var aes = Aes.Create())
-                {
-                    aes.Key = aesKey;
-                    aes.IV = aesIV;
-
-                    using (var decryptor = aes.CreateDecryptor())
-                    {
-                        byte[] decrypted = decryptor.TransformFinalBlock(
-                            encryptedData, 0, encryptedData.Length);
-                        return Encoding.UTF8.GetString(decrypted);
-                    }
-                }
+                return DecryptWithKey(cipherData, localKeyPair);
             }
             catch (Exception ex)
             {
@@ -157,21 +112,25 @@ namespace DaemonVision.Network
         }
 
         /// <summary>
-        /// Sign a message with our private key to prove authenticity.
+        /// Sign data with our private key so peers can verify it came from us.
         /// </summary>
         public byte[] Sign(byte[] data)
         {
+            if (localKeyPair == null || data == null) return null;
             return localKeyPair.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         }
 
         /// <summary>
-        /// Verify a message signature against a sender's public key.
+        /// Verify a signature against the sender's public key.
         /// </summary>
         public bool Verify(byte[] data, byte[] signature, string senderPublicKey)
         {
+            if (data == null || signature == null || string.IsNullOrEmpty(senderPublicKey))
+                return false;
+
             try
             {
-                using (var rsa = new RSACryptoServiceProvider(2048))
+                using (var rsa = new RSACryptoServiceProvider(RsaKeySizeBits))
                 {
                     rsa.FromXmlString(senderPublicKey);
                     return rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -185,10 +144,95 @@ namespace DaemonVision.Network
 
         public string GetLocalPublicKey() => localPublicKey;
 
+        // ----------------------------------------------------------------
+        //  Pure crypto core. Static so edit-mode tests can exercise it
+        //  without a scene or a subsystem lifecycle.
+        // ----------------------------------------------------------------
+
+        public static byte[] EncryptForRecipient(string plaintext, string recipientPublicKeyXml)
+        {
+            if (plaintext == null) throw new ArgumentNullException(nameof(plaintext));
+            if (string.IsNullOrEmpty(recipientPublicKeyXml))
+                throw new ArgumentException("Recipient public key is required.", nameof(recipientPublicKeyXml));
+
+            using (var aes = Aes.Create())
+            using (var rsa = new RSACryptoServiceProvider(RsaKeySizeBits))
+            {
+                aes.KeySize = AesKeySizeBits;
+                aes.GenerateKey();
+                aes.GenerateIV();
+                rsa.FromXmlString(recipientPublicKeyXml);
+
+                byte[] plainBytes = Encoding.UTF8.GetBytes(plaintext);
+                byte[] ciphertext;
+                using (var encryptor = aes.CreateEncryptor())
+                {
+                    ciphertext = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
+                }
+
+                byte[] encryptedKey = rsa.Encrypt(aes.Key, KeyPadding);
+                if (encryptedKey.Length > ushort.MaxValue)
+                    throw new CryptographicException("Wrapped key does not fit the wire format.");
+
+                byte[] iv = aes.IV;
+                var result = new byte[HeaderLength + encryptedKey.Length + iv.Length + ciphertext.Length];
+                int offset = 0;
+                result[offset++] = WireVersion;
+                result[offset++] = (byte)(encryptedKey.Length & 0xFF);
+                result[offset++] = (byte)((encryptedKey.Length >> 8) & 0xFF);
+                Buffer.BlockCopy(encryptedKey, 0, result, offset, encryptedKey.Length);
+                offset += encryptedKey.Length;
+                Buffer.BlockCopy(iv, 0, result, offset, iv.Length);
+                offset += iv.Length;
+                Buffer.BlockCopy(ciphertext, 0, result, offset, ciphertext.Length);
+                return result;
+            }
+        }
+
+        public static string DecryptWithKey(byte[] cipherData, RSA privateKey)
+        {
+            if (privateKey == null) throw new ArgumentNullException(nameof(privateKey));
+            if (cipherData == null || cipherData.Length < HeaderLength + IvLength + 1)
+                throw new CryptographicException("Cipher data is too short.");
+            if (cipherData[0] != WireVersion)
+                throw new CryptographicException($"Unsupported wire version {cipherData[0]}.");
+
+            int keyLen = cipherData[1] | (cipherData[2] << 8);
+            int offset = HeaderLength;
+            if (keyLen <= 0 || offset + keyLen + IvLength >= cipherData.Length)
+                throw new CryptographicException("Cipher data is malformed.");
+
+            var encryptedKey = new byte[keyLen];
+            Buffer.BlockCopy(cipherData, offset, encryptedKey, 0, keyLen);
+            offset += keyLen;
+
+            var iv = new byte[IvLength];
+            Buffer.BlockCopy(cipherData, offset, iv, 0, IvLength);
+            offset += IvLength;
+
+            var ciphertext = new byte[cipherData.Length - offset];
+            Buffer.BlockCopy(cipherData, offset, ciphertext, 0, ciphertext.Length);
+
+            byte[] aesKey = privateKey.Decrypt(encryptedKey, KeyPadding);
+
+            using (var aes = Aes.Create())
+            {
+                aes.Key = aesKey;
+                aes.IV = iv;
+                using (var decryptor = aes.CreateDecryptor())
+                {
+                    byte[] plain = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
+                    return Encoding.UTF8.GetString(plain);
+                }
+            }
+        }
+
         private void GenerateNewKeyPair()
         {
-            localKeyPair = new RSACryptoServiceProvider(2048);
-            PlayerPrefs.SetString("darknet_private_key", localKeyPair.ToXmlString(true));
+            localKeyPair = new RSACryptoServiceProvider(RsaKeySizeBits);
+            // Stored in PlayerPrefs, which is app-private storage on Android and iOS.
+            // Moving this into the platform keystore is tracked as future hardening.
+            PlayerPrefs.SetString(PrivateKeyPref, localKeyPair.ToXmlString(true));
             PlayerPrefs.Save();
             Log("New encryption key pair generated.");
         }
@@ -196,6 +240,7 @@ namespace DaemonVision.Network
         protected override void OnShutdown()
         {
             localKeyPair?.Dispose();
+            localKeyPair = null;
         }
     }
 }

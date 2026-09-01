@@ -98,13 +98,13 @@ namespace DaemonVision.Economy
             balance -= totalCost;
 
             var tx = RecordTransaction(TransactionType.Transfer, amount,
-                $"Transfer to {targetAddress[..8]}...: {memo}");
+                $"Transfer to {AddressUtil.Short(targetAddress)}: {memo}");
             tx.TargetAddress = targetAddress;
             tx.Fee = fee;
 
             pendingTransactions.Enqueue(tx);
 
-            Log($"Transferred {amount} credits to {targetAddress[..8]}... (fee: {fee}). Balance: {balance}");
+            Log($"Transferred {amount} credits to {AddressUtil.Short(targetAddress)} (fee: {fee}). Balance: {balance}");
             OnBalanceChanged?.Invoke(balance);
             OnTransactionCompleted?.Invoke(tx);
             SaveBalance();
@@ -118,10 +118,10 @@ namespace DaemonVision.Economy
         {
             balance += amount;
             var tx = RecordTransaction(TransactionType.Receive, amount,
-                $"Received from {fromAddress[..8]}...: {memo}");
+                $"Received from {AddressUtil.Short(fromAddress)}: {memo}");
             tx.TargetAddress = fromAddress;
 
-            Log($"Received {amount} credits from {fromAddress[..8]}... Balance: {balance}");
+            Log($"Received {amount} credits from {AddressUtil.Short(fromAddress)} Balance: {balance}");
             OnBalanceChanged?.Invoke(balance);
             OnTransactionCompleted?.Invoke(tx);
             SaveBalance();

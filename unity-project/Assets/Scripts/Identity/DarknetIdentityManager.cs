@@ -35,7 +35,7 @@ namespace DaemonVision.Identity
             // Load or create local identity
             LocalIdentity = LoadLocalIdentity() ?? CreateNewIdentity();
             knownIdentities[LocalIdentity.DarknetAddress] = LocalIdentity;
-            Log($"Local identity: {LocalIdentity.Callsign} [{LocalIdentity.DarknetAddress[..8]}...]");
+            Log($"Local identity: {LocalIdentity.Callsign} [{AddressUtil.Short(LocalIdentity.DarknetAddress)}]");
             return Task.CompletedTask;
         }
 

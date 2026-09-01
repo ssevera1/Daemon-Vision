@@ -150,33 +150,30 @@ namespace DaemonVision.Editor
         [MenuItem(MenuRoot + "Reset Local Identity", false, 400)]
         public static void ResetLocalIdentity()
         {
+            // These are the keys the runtime subsystems actually write
+            // (DarknetIdentityManager, DarknetProtocol, DarknetEconomy,
+            // LevelProgression, ReputationSystem, QuestManager).
+            string[] identityKeys =
+            {
+                "darknet_identity",
+                "darknet_private_key",
+                "darknet_credits",
+                "darknet_transactions",
+                "darknet_xp",
+                "reputation_history",
+                "completed_quests"
+            };
+
             bool confirm = EditorUtility.DisplayDialog(
                 "Reset Local Identity",
-                "This will clear all identity-related PlayerPrefs.\n\n" +
-                "Keys to be removed:\n" +
-                "  - dspace_operative_id\n" +
-                "  - dspace_operative_name\n" +
-                "  - dspace_callsign\n" +
-                "  - dspace_public_key\n" +
-                "  - dspace_private_key\n" +
-                "  - dspace_identity_created\n\n" +
+                "This will clear the local operative's identity, keys, credits, XP, " +
+                "reputation history and quest progress from PlayerPrefs.\n\n" +
+                "Keys to be removed:\n  - " + string.Join("\n  - ", identityKeys) + "\n\n" +
                 "Are you sure?",
                 "Reset Identity",
                 "Cancel");
 
             if (!confirm) return;
-
-            string[] identityKeys =
-            {
-                "dspace_operative_id",
-                "dspace_operative_name",
-                "dspace_callsign",
-                "dspace_public_key",
-                "dspace_private_key",
-                "dspace_identity_created",
-                "dspace_appearance_hash",
-                "dspace_trust_score"
-            };
 
             foreach (string key in identityKeys)
             {

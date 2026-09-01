@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════
-# Daemon Vision — Deployment Script
+# Daemon Vision - Deployment Script
 # ═══════════════════════════════════════════════════════════════════
 #
-# Usage:  ./deploy.sh <target> [--launch] [--device <serial>]
+# Usage:  ./deploy.sh <target> [--launch] [--device <serial>] [--apk <path>]
 #
 # Targets:
-#   quest       — Deploy D-Space APK to Meta Quest headset
-#   phone       — Deploy D-Space phone APK to Android device
-#   companion   — Deploy companion app APK to Android phone
+#   quest       Deploy D-Space APK to Meta Quest headset
+#   phone       Deploy D-Space phone APK to Android device
+#   companion   Deploy companion app APK to Android phone
 #
 # Options:
 #   --launch           Launch the app after installation
@@ -24,7 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILDS_DIR="$PROJECT_ROOT/builds"
 
-# Package names for each target
+# Package names for each target. The D-Space id must match
+# DaemonVisionBuildConfig.BundleIdentifier and ProjectSettings.asset.
 declare -A PACKAGE_NAMES=(
     [quest]="com.daemon.vision.dspace"
     [phone]="com.daemon.vision.dspace"
@@ -37,6 +38,9 @@ declare -A LAUNCH_ACTIVITIES=(
     [phone]="com.daemon.vision.dspace/com.unity3d.player.UnityPlayerActivity"
     [companion]="com.daemon.vision.companion/.CompanionActivity"
 )
+
+# adb command as an array so an optional "-s <serial>" survives quoting.
+ADB=(adb)
 
 # ─── Color Output ─────────────────────────────────────────────────
 
@@ -63,34 +67,23 @@ check_adb() {
     fi
 }
 
-get_adb_cmd() {
-    local device_serial="${1:-}"
-    if [ -n "$device_serial" ]; then
-        echo "adb -s $device_serial"
-    else
-        echo "adb"
-    fi
-}
-
 show_device_info() {
-    local adb_cmd="$1"
-
     echo ""
     echo -e "${BOLD}─── Device Information ───${NC}"
 
     local model manufacturer serial android_ver sdk_ver battery
-    model=$($adb_cmd shell getprop ro.product.model 2>/dev/null || echo "unknown")
-    manufacturer=$($adb_cmd shell getprop ro.product.manufacturer 2>/dev/null || echo "unknown")
-    serial=$($adb_cmd get-serialno 2>/dev/null || echo "unknown")
-    android_ver=$($adb_cmd shell getprop ro.build.version.release 2>/dev/null || echo "?")
-    sdk_ver=$($adb_cmd shell getprop ro.build.version.sdk 2>/dev/null || echo "?")
-    battery=$($adb_cmd shell dumpsys battery 2>/dev/null | grep "level:" | awk '{print $2}' || echo "?")
+    model=$("${ADB[@]}" shell getprop ro.product.model 2>/dev/null || echo "unknown")
+    manufacturer=$("${ADB[@]}" shell getprop ro.product.manufacturer 2>/dev/null || echo "unknown")
+    serial=$("${ADB[@]}" get-serialno 2>/dev/null || echo "unknown")
+    android_ver=$("${ADB[@]}" shell getprop ro.build.version.release 2>/dev/null || echo "?")
+    sdk_ver=$("${ADB[@]}" shell getprop ro.build.version.sdk 2>/dev/null || echo "?")
+    battery=$("${ADB[@]}" shell dumpsys battery 2>/dev/null | awk '/level:/ {print $2}' || echo "?")
 
     echo -e "  Manufacturer:  ${BOLD}${manufacturer}${NC}"
     echo -e "  Model:         ${BOLD}${model}${NC}"
     echo -e "  Serial:        ${DIM}${serial}${NC}"
     echo -e "  Android:       ${android_ver} (SDK ${sdk_ver})"
-    echo -e "  Battery:       ${battery}%"
+    echo -e "  Battery:       ${battery:-?}%"
     echo ""
 }
 
@@ -106,15 +99,9 @@ find_latest_apk() {
 
     local latest_apk
     case "$target" in
-        quest)
-            latest_apk="$apk_dir/DaemonVision_Quest_latest.apk"
-            ;;
-        phone)
-            latest_apk="$apk_dir/DaemonVision_Phone_latest.apk"
-            ;;
-        companion)
-            latest_apk="$apk_dir/DaemonVision_Companion_latest.apk"
-            ;;
+        quest)     latest_apk="$apk_dir/DaemonVision_Quest_latest.apk" ;;
+        phone)     latest_apk="$apk_dir/DaemonVision_Phone_latest.apk" ;;
+        companion) latest_apk="$apk_dir/DaemonVision_Companion_latest.apk" ;;
         *)
             err "Unknown target: $target"
             return 1
@@ -131,12 +118,11 @@ find_latest_apk() {
 }
 
 wait_for_device() {
-    local adb_cmd="$1"
     local timeout=30
 
     log "Waiting for device..."
     local count=0
-    while ! $adb_cmd get-state &>/dev/null; do
+    while ! "${ADB[@]}" get-state &>/dev/null; do
         count=$((count + 1))
         if [ $count -ge $timeout ]; then
             err "Timed out waiting for device after ${timeout}s."
@@ -147,7 +133,7 @@ wait_for_device() {
     done
 
     local state
-    state=$($adb_cmd get-state 2>/dev/null)
+    state=$("${ADB[@]}" get-state 2>/dev/null)
     if [ "$state" != "device" ]; then
         err "Device state is '$state', expected 'device'."
         err "Check USB debugging authorization on the device."
@@ -157,13 +143,17 @@ wait_for_device() {
     ok "Device connected."
 }
 
+package_installed() {
+    local package="$1"
+    "${ADB[@]}" shell pm list packages 2>/dev/null | grep -q "^package:${package}$"
+}
+
 # ─── Deploy ───────────────────────────────────────────────────────
 
 deploy() {
     local target="$1"
-    local adb_cmd="$2"
-    local apk_path="$3"
-    local do_launch="$4"
+    local apk_path="$2"
+    local do_launch="$3"
 
     local package="${PACKAGE_NAMES[$target]}"
     local activity="${LAUNCH_ACTIVITIES[$target]}"
@@ -172,89 +162,72 @@ deploy() {
 
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  DAEMON VISION — DEPLOYING: ${BOLD}${target}${NC}"
+    echo -e "${CYAN}  DAEMON VISION - DEPLOYING: ${BOLD}${target}${NC}"
     echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
     echo ""
 
-    show_device_info "$adb_cmd"
+    show_device_info
 
     log "APK:     $apk_path"
     log "Size:    $apk_size"
     log "Package: $package"
     echo ""
 
-    # Check if already installed
-    local installed=false
-    if $adb_cmd shell pm list packages 2>/dev/null | grep -q "$package"; then
-        installed=true
+    local install_flags=(-r)  # Replace existing
+    if package_installed "$package"; then
         log "Package already installed. Will update."
+        install_flags+=(-d)   # Allow downgrade
     fi
 
-    # Install
     log "Installing APK..."
     local install_start
     install_start=$(date +%s)
 
-    local install_flags="-r"  # Replace existing
-    if [ "$installed" = true ]; then
-        install_flags="$install_flags -d"  # Allow downgrade
-    fi
-
-    if ! $adb_cmd install $install_flags "$apk_path" 2>&1; then
+    if ! "${ADB[@]}" install "${install_flags[@]}" "$apk_path"; then
         err "Installation failed."
-
-        # Common failure diagnostics
-        if $adb_cmd shell pm list packages | grep -q "$package"; then
+        if package_installed "$package"; then
             warn "The package is installed but could not be updated."
-            warn "Try: $adb_cmd uninstall $package"
+            warn "Try: ${ADB[*]} uninstall $package"
         fi
-
         exit 1
     fi
 
-    local install_end
+    local install_end install_time
     install_end=$(date +%s)
-    local install_time=$((install_end - install_start))
-
+    install_time=$((install_end - install_start))
     ok "Installation completed in ${install_time}s."
 
-    # Verify installation
     log "Verifying installation..."
-    if $adb_cmd shell pm list packages 2>/dev/null | grep -q "$package"; then
+    if package_installed "$package"; then
         local version
-        version=$($adb_cmd shell dumpsys package "$package" 2>/dev/null | grep "versionName" | head -1 | awk -F= '{print $2}' || echo "?")
-        ok "Verified: $package v${version}"
+        version=$("${ADB[@]}" shell dumpsys package "$package" 2>/dev/null | awk -F= '/versionName/ {print $2; exit}')
+        ok "Verified: $package v${version:-?}"
     else
         err "Verification failed: package not found after installation."
         exit 1
     fi
 
-    # Grant permissions automatically
     log "Granting runtime permissions..."
     local permissions=(
         "android.permission.ACCESS_FINE_LOCATION"
         "android.permission.ACCESS_COARSE_LOCATION"
         "android.permission.CAMERA"
-        "android.permission.INTERNET"
     )
-
     for perm in "${permissions[@]}"; do
-        $adb_cmd shell pm grant "$package" "$perm" 2>/dev/null || true
+        "${ADB[@]}" shell pm grant "$package" "$perm" 2>/dev/null || true
     done
     ok "Permissions granted."
 
-    # Launch
     if [ "$do_launch" = "true" ]; then
         echo ""
         log "Launching $target..."
-        if $adb_cmd shell am start -n "$activity" 2>&1; then
+        if "${ADB[@]}" shell am start -n "$activity"; then
             ok "App launched: $activity"
         else
             warn "Failed to launch app. You may need to start it manually."
         fi
     fi
 
-    # Final summary
     echo ""
     echo -e "${BOLD}─── Deployment Complete ───${NC}"
     echo -e "  Target:   ${BOLD}${target}${NC}"
@@ -274,7 +247,6 @@ main() {
     local do_launch="false"
     local custom_apk=""
 
-    # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
             quest|phone|companion)
@@ -332,24 +304,20 @@ main() {
         exit 1
     fi
 
-    # Validate target
     if [[ ! -v PACKAGE_NAMES[$target] ]]; then
         err "Invalid target: $target"
         err "Valid targets: quest, phone, companion"
         exit 1
     fi
 
-    # Check adb
     check_adb
 
-    # Determine adb command (with optional device serial)
-    local adb_cmd
-    adb_cmd=$(get_adb_cmd "$device_serial")
+    if [ -n "$device_serial" ]; then
+        ADB+=(-s "$device_serial")
+    fi
 
-    # Wait for device
-    wait_for_device "$adb_cmd"
+    wait_for_device
 
-    # Find APK
     local apk_path
     if [ -n "$custom_apk" ]; then
         if [ ! -f "$custom_apk" ]; then
@@ -361,8 +329,7 @@ main() {
         apk_path=$(find_latest_apk "$target") || exit 1
     fi
 
-    # Deploy
-    deploy "$target" "$adb_cmd" "$apk_path" "$do_launch"
+    deploy "$target" "$apk_path" "$do_launch"
 }
 
 main "$@"
