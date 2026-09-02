@@ -53,7 +53,7 @@
 
     <!-- ── Text Styles ── -->
 
-    <style name="DaemonVision.Text.Title">
+    <style name="DaemonVision.Text.Title" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#00E5CC</item>
         <item name="android:textSize">28sp</item>
@@ -61,39 +61,39 @@
         <item name="android:letterSpacing">0.3</item>
     </style>
 
-    <style name="DaemonVision.Text.Subtitle">
+    <style name="DaemonVision.Text.Subtitle" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#667788</item>
         <item name="android:textSize">14sp</item>
         <item name="android:letterSpacing">0.5</item>
     </style>
 
-    <style name="DaemonVision.Text.SectionHeader">
+    <style name="DaemonVision.Text.SectionHeader" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#556677</item>
         <item name="android:textSize">11sp</item>
         <item name="android:letterSpacing">0.15</item>
     </style>
 
-    <style name="DaemonVision.Text.Value">
+    <style name="DaemonVision.Text.Value" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#CCDDEE</item>
         <item name="android:textSize">16sp</item>
     </style>
 
-    <style name="DaemonVision.Text.Label">
+    <style name="DaemonVision.Text.Label" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#556677</item>
         <item name="android:textSize">13sp</item>
     </style>
 
-    <style name="DaemonVision.Text.StatusConnected">
+    <style name="DaemonVision.Text.StatusConnected" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#00E5CC</item>
         <item name="android:textSize">16sp</item>
     </style>
 
-    <style name="DaemonVision.Text.StatusDisconnected">
+    <style name="DaemonVision.Text.StatusDisconnected" parent="">
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#FF3355</item>
         <item name="android:textSize">16sp</item>
@@ -101,7 +101,7 @@
 
     <!-- ── Button Styles ── -->
 
-    <style name="DaemonVision.Button.Primary">
+    <style name="DaemonVision.Button.Primary" parent="">
         <item name="android:background">@drawable/button_primary</item>
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#0A0A14</item>
@@ -110,7 +110,7 @@
         <item name="android:letterSpacing">0.1</item>
     </style>
 
-    <style name="DaemonVision.Button.Outline">
+    <style name="DaemonVision.Button.Outline" parent="">
         <item name="android:background">@drawable/button_outline</item>
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#00E5CC</item>
@@ -118,7 +118,7 @@
         <item name="android:letterSpacing">0.1</item>
     </style>
 
-    <style name="DaemonVision.Button.Danger">
+    <style name="DaemonVision.Button.Danger" parent="">
         <item name="android:background">@drawable/button_danger</item>
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#CCDDEE</item>
@@ -128,14 +128,14 @@
 
     <!-- ── Card Style ── -->
 
-    <style name="DaemonVision.Card">
+    <style name="DaemonVision.Card" parent="">
         <item name="android:background">@drawable/card_background</item>
         <item name="android:padding">16dp</item>
     </style>
 
     <!-- ── Input Style ── -->
 
-    <style name="DaemonVision.Input">
+    <style name="DaemonVision.Input" parent="">
         <item name="android:background">@drawable/input_background</item>
         <item name="android:fontFamily">monospace</item>
         <item name="android:textColor">#CCDDEE</item>
