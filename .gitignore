@@ -27,8 +27,11 @@ unity-project/Logs/
 unity-project/UserSettings/
 unity-project/MemoryCaptures/
 unity-project/Assets/Plugins/Android/*.aar
-*.csproj
-*.sln
+# Unity's own IDE project/solution files only — a bare "*.csproj" here also
+# swallowed tools/ci/CsSyntaxCheck/CsSyntaxCheck.csproj, a real hand-written
+# project, and CI silently had no project to build (caught 2026-09-01).
+unity-project/*.csproj
+unity-project/*.sln
 *.unityproj
 *.pidb
 *.pdb
