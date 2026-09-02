@@ -75,6 +75,13 @@ def check_meta_files() -> dict[str, Path]:
             guids[g] = target
             continue
 
+        # Unity's own AssetDatabase ignores dotfiles (and their containing
+        # dotfolders) entirely, so a .gitkeep placeholder that keeps an
+        # otherwise-empty folder in git needs no .meta, and Unity will never
+        # generate one for it either.
+        if p.name.startswith("."):
+            continue
+
         if not Path(str(p) + ".meta").exists():
             missing.append(p)
 
